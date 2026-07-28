@@ -4,6 +4,11 @@ import { runtimeEnv, telegramConfig } from "../config";
 import { BridgeError } from "../errors";
 import { logError, logInfo, safeErrorCode, safeToken } from "../logger";
 import { splitTelegramText } from "../text";
+import {
+  attachmentField,
+  type DownloadedAttachment,
+  type TelegramAttachmentMethod,
+} from "../attachments";
 import type { TelegramApiResponse } from "./types";
 
 function telegramMethodUrl(method: string) {
@@ -26,6 +31,29 @@ async function telegramRequest<T>(
     throw new BridgeError("TELEGRAM_NETWORK", 502, true);
   }
 
+  const body = (await response
+    .json()
+    .catch(() => ({ ok: false }))) as TelegramApiResponse<T>;
+  if (!response.ok || !body.ok || body.result === undefined) {
+    throw new BridgeError(
+      `TELEGRAM_API_${body.error_code ?? response.status}`,
+      502,
+      response.status >= 500 || response.status === 429,
+    );
+  }
+  return body.result;
+}
+
+async function telegramMultipartRequest<T>(method: string, payload: FormData) {
+  let response: Response;
+  try {
+    response = await fetch(telegramMethodUrl(method), {
+      method: "POST",
+      body: payload,
+    });
+  } catch {
+    throw new BridgeError("TELEGRAM_NETWORK", 502, true);
+  }
   const body = (await response
     .json()
     .catch(() => ({ ok: false }))) as TelegramApiResponse<T>;
@@ -84,6 +112,31 @@ export async function sendTelegramText(input: {
     );
   }
   return messageIds;
+}
+
+export async function sendTelegramAttachment(input: {
+  chatId: string;
+  attachment: DownloadedAttachment;
+  method: TelegramAttachmentMethod;
+  caption?: string;
+  messageThreadId?: number;
+}) {
+  const form = new FormData();
+  form.set("chat_id", input.chatId);
+  if (input.messageThreadId)
+    form.set("message_thread_id", String(input.messageThreadId));
+  if (input.caption) form.set("caption", input.caption);
+  const fileBytes = Uint8Array.from(input.attachment.bytes).buffer;
+  form.set(
+    attachmentField(input.method),
+    new Blob([fileBytes], { type: input.attachment.mimeType }),
+    input.attachment.fileName,
+  );
+  const result = await telegramMultipartRequest<{ message_id: number }>(
+    input.method,
+    form,
+  );
+  return String(result.message_id);
 }
 
 export async function reconcileTelegramWebhook() {

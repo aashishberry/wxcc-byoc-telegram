@@ -15,9 +15,16 @@ export type WebexEvent = {
       message?: {
         aliasId?: string;
         text?: string;
-        attachments?: unknown[];
+        attachments?: WebexAttachment[];
         timestamp?: number | string;
       };
     };
   };
+};
+
+export type WebexAttachment = {
+  url?: string;
+  fileUrl?: string;
+  mimeType?: string;
+  fileName?: string;
 };

@@ -15,6 +15,9 @@ export type RuntimeEnv = {
   TELEGRAM_WELCOME_MESSAGE?: string;
   TELEGRAM_UNSUPPORTED_MESSAGE?: string;
   TELEGRAM_OUTBOUND_ATTACHMENT_MESSAGE?: string;
+  TELEGRAM_OUTBOUND_ATTACHMENTS_ENABLED?: string;
+  TELEGRAM_MAX_ATTACHMENT_BYTES?: string;
+  TELEGRAM_ATTACHMENT_DOWNLOAD_TIMEOUT_MS?: string;
   WEBEX_TASKS_URL?: string;
   WEBEX_SUBSCRIPTIONS_URL?: string;
   WEBEX_ORG_ID?: string;
@@ -22,6 +25,7 @@ export type RuntimeEnv = {
   WEBEX_WEBHOOK_SECRET?: string;
   WEBEX_DESTINATION_ID?: string;
   WEBEX_CHANNEL_NAME?: string;
+  WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED?: string;
   WEBEX_ACCESS_TOKEN?: string;
   WEBEX_CLIENT_ID?: string;
   WEBEX_CLIENT_SECRET?: string;
@@ -42,6 +46,12 @@ function required(value: string | undefined, code: string) {
 
 export function telegramConfig() {
   const env = runtimeEnv();
+  const requestedMaxAttachmentBytes = Number(
+    env.TELEGRAM_MAX_ATTACHMENT_BYTES ?? 50 * 1024 * 1024,
+  );
+  const requestedDownloadTimeout = Number(
+    env.TELEGRAM_ATTACHMENT_DOWNLOAD_TIMEOUT_MS ?? 30_000,
+  );
   return {
     botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_TOKEN_MISSING"),
     webhookSecret: required(
@@ -64,8 +74,24 @@ export function telegramConfig() {
       "This integration currently supports text messages only.",
     outboundAttachmentMessage:
       env.TELEGRAM_OUTBOUND_ATTACHMENT_MESSAGE?.trim() ||
-      "Support sent an attachment, but this connector cannot deliver attachments yet.",
+      "Support sent an attachment that could not be delivered through this channel.",
+    outboundAttachmentsEnabled:
+      env.TELEGRAM_OUTBOUND_ATTACHMENTS_ENABLED !== "false",
+    maxAttachmentBytes:
+      Number.isSafeInteger(requestedMaxAttachmentBytes) &&
+      requestedMaxAttachmentBytes > 0
+        ? Math.min(requestedMaxAttachmentBytes, 50 * 1024 * 1024)
+        : 50 * 1024 * 1024,
+    attachmentDownloadTimeoutMs:
+      Number.isSafeInteger(requestedDownloadTimeout) &&
+      requestedDownloadTimeout >= 1_000
+        ? Math.min(requestedDownloadTimeout, 120_000)
+        : 30_000,
   };
+}
+
+export function webexAttachmentsEncrypted() {
+  return runtimeEnv().WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED === "true";
 }
 
 export function webexConfig() {

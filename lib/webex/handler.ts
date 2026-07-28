@@ -1,4 +1,8 @@
-import { runtimeEnv, telegramConfig } from "../config";
+import {
+  runtimeEnv,
+  telegramConfig,
+  webexAttachmentsEncrypted,
+} from "../config";
 import { BridgeError } from "../errors";
 import {
   logError,
@@ -15,7 +19,10 @@ import {
   finishWebexEvent,
   updateConversationStatus,
 } from "../store";
-import { deliverTelegramText } from "../telegram/delivery";
+import {
+  deliverTelegramAttachments,
+  deliverTelegramText,
+} from "../telegram/delivery";
 import { verifyWebexWebhook } from "./signature";
 import type { WebexEvent } from "./types";
 
@@ -153,14 +160,49 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       if (!conversation)
         throw new BridgeError("WEBEX_CONVERSATION_NOT_READY", 503, true);
       const message = event.data.channelParams?.message;
-      const hasAttachments = Boolean(message?.attachments?.length);
-      const text =
-        message?.text?.trim() ||
-        (hasAttachments ? telegramConfig().outboundAttachmentMessage : "");
-      if (text) {
-        await deliverTelegramText({
+      const attachments = message?.attachments ?? [];
+      const text = message?.text?.trim() ?? "";
+      const attachmentConfig = telegramConfig();
+      if (
+        attachments.length &&
+        attachmentConfig.outboundAttachmentsEnabled &&
+        !webexAttachmentsEncrypted()
+      ) {
+        await deliverTelegramAttachments({
           taskId,
           deliveryKey: `webex:${message?.aliasId ?? event.id}`,
+          text,
+          attachments,
+        });
+      } else if (attachments.length) {
+        if (text) {
+          await deliverTelegramText({
+            taskId,
+            deliveryKey: `webex:${message?.aliasId ?? event.id}:text`,
+            text,
+          });
+        }
+        logInfo("telegram.attachment_ignored", {
+          provider: "telegram",
+          outcome: "ignored",
+          taskRef: safeRef(taskId),
+          updateRef: eventRef,
+          code: safeToken(
+            webexAttachmentsEncrypted()
+              ? "WEBEX_ATTACHMENT_ENCRYPTED"
+              : "ATTACHMENTS_DISABLED",
+          ),
+          count: attachments.length,
+        });
+        await deliverTelegramText({
+          taskId,
+          deliveryKey: `webex:${message?.aliasId ?? event.id}:attachment-fallback`,
+          text: attachmentConfig.outboundAttachmentMessage,
+        });
+      } else if (text) {
+        await deliverTelegramText({
+          taskId,
+          deliveryKey: `webex:${message?.aliasId ?? event.id}:text`,
           text,
         });
       }

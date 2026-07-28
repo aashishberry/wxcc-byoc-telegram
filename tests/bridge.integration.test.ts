@@ -66,7 +66,20 @@ test("messages bridge both directions and ended tasks start a new conversation",
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
-    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const requestBody = init?.body;
+    const body =
+      requestBody instanceof FormData
+        ? {
+            method: url.split("/").pop(),
+            chat_id: requestBody.get("chat_id"),
+            caption: requestBody.get("caption"),
+            file: ["photo", "animation", "video", "audio", "document"]
+              .map((field) => requestBody.get(field))
+              .find(Boolean),
+          }
+        : requestBody
+          ? JSON.parse(String(requestBody))
+          : {};
     if (url === "https://webex.mock/v2/tasks") {
       webexRequests.push(body);
       return Response.json(
@@ -79,6 +92,15 @@ test("messages bridge both directions and ended tasks start a new conversation",
       return Response.json({
         ok: true,
         result: { message_id: telegramRequests.length },
+      });
+    }
+    if (url === "https://files.example/order-details.pdf") {
+      return new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: {
+          "content-length": "4",
+          "content-type": "application/pdf",
+        },
       });
     }
     throw new Error(`Unexpected mocked request: ${new URL(url).pathname}`);
@@ -136,6 +158,42 @@ test("messages bridge both directions and ended tasks start a new conversation",
     const replyRequest = signedWebexRequest(reply);
     await handleWebexWebhook(replyRequest.rawBody, replyRequest.request);
     assert.equal(telegramRequests[1].text, "Agent reply");
+
+    const attachmentReply: WebexEvent = {
+      id: randomUUID(),
+      type: "task-message:appended",
+      comciscotimestamp: Date.now(),
+      data: {
+        taskId: taskIds[0],
+        channel: "telegram",
+        channelType: "customMessaging",
+        messageDirection: "OUTBOUND",
+        senderType: "agent",
+        channelParams: {
+          message: {
+            aliasId: randomUUID(),
+            text: "Requested document",
+            attachments: [
+              {
+                url: "https://files.example/order-details.pdf",
+                mimeType: "application/pdf",
+                fileName: "order-details.pdf",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const attachmentRequest = signedWebexRequest(attachmentReply);
+    await handleWebexWebhook(
+      attachmentRequest.rawBody,
+      attachmentRequest.request,
+    );
+    const attachmentDelivery = telegramRequests[2];
+    assert.equal(attachmentDelivery.method, "sendDocument");
+    assert.equal(attachmentDelivery.caption, "Requested document");
+    assert.equal((attachmentDelivery.file as File).name, "order-details.pdf");
+    assert.equal((attachmentDelivery.file as File).type, "application/pdf");
 
     const ended: WebexEvent = {
       id: randomUUID(),

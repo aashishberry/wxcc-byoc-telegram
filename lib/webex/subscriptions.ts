@@ -29,6 +29,7 @@ const desiredSubscriptions: DesiredSubscription[] = [
       "task:new",
       "task:connect",
       "task:connected",
+      "task:parked",
       "task:ended",
       "task:failed",
     ],
@@ -36,15 +37,9 @@ const desiredSubscriptions: DesiredSubscription[] = [
   },
   {
     name: "telegram-bridge-task-messages",
-    description: "Task message events for the Telegram messaging bridge",
+    description: "Inbound task-message events for the Telegram bridge",
     eventTypes: ["task-message:appended", "task-message:append-failed"],
     resourceVersion: "task-message:1.0.0",
-  },
-  {
-    name: "telegram-bridge-task-queue",
-    description: "Queued task events for the Telegram messaging bridge",
-    eventTypes: ["task:parked"],
-    resourceVersion: "task:1.0.0",
   },
 ];
 
