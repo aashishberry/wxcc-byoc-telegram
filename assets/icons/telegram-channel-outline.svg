@@ -1,0 +1,34 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Telegram channel outline icon</title>
+  <desc id="description">
+    A paper plane inside a circular black and grey outline
+  </desc>
+  <circle
+    cx="256"
+    cy="256"
+    r="218"
+    stroke="#252A2E"
+    stroke-width="24"
+  />
+  <path
+    d="M116 247.5 394.2 140c12.8-4.9 24.9 7 20 19.8L306.8 438c-4.6 12-21.3 12.9-27.2 1.5l-62.2-120.7-101-42.1c-13-5.4-13.5-24.1-.4-29.2Z"
+    stroke="#252A2E"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+  <path
+    d="m217.4 318.8 92.8-85.3M217.4 318.8l63.1 121.7"
+    stroke="#70777D"
+    stroke-width="22"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
