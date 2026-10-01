@@ -19,9 +19,8 @@ import {
   deliverTelegramAttachments,
   deliverTelegramText,
 } from "../telegram/delivery";
-import { extractWebexMessage, webexPayloadHints } from "./message";
+import { extractWebexMessage } from "./message";
 import { verifyWebexWebhook } from "./signature";
-import { webexWebhookSourceKind } from "./subscriptions";
 import type { WebexEvent } from "./types";
 
 const taskStatuses: Record<string, string> = {
@@ -68,14 +67,6 @@ function outboundMessage(event: WebexEvent) {
   );
 }
 
-function messageClassification(event: WebexEvent) {
-  if (event.type !== "task-message:appended") return;
-  if (outboundMessage(event)) return "OUTBOUND_ASSET";
-  if (normalizedEventValue(event.data?.messageDirection) === "INBOUND")
-    return "INBOUND_SUBSCRIPTION_ACK";
-  return "UNCLASSIFIED_MESSAGE";
-}
-
 export async function handleWebexWebhook(rawBody: string, request: Request) {
   let event: WebexEvent;
   try {
@@ -93,9 +84,6 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
   const eventRef = safeRef(event.id);
   const taskRef = safeRef(taskId);
   const eventType = safeToken(event.type);
-  const webhookVersion = safeToken(
-    request.headers.get("x-webexcc-webhook-version"),
-  );
   logInfo("webex.webhook_received", {
     provider: "webex",
     outcome: "accepted",
@@ -160,7 +148,6 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
 
   try {
     const status = taskStatuses[event.type];
-    let messageStatus = messageClassification(event);
     const extractedMessage =
       event.type === "task-message:appended"
         ? extractWebexMessage(event)
@@ -234,11 +221,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
           deliveryKey: `webex:${message?.aliasId ?? event.id}:text`,
           text,
         });
-      } else {
-        messageStatus = "OUTBOUND_ASSET_EMPTY";
       }
-      if (messageStatus !== "OUTBOUND_ASSET_EMPTY")
-        messageStatus = "OUTBOUND_ASSET_DELIVERED";
     }
 
     await finishWebexEvent(eventKey, "completed");
@@ -248,38 +231,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       updateRef: eventRef,
       taskRef,
       eventType,
-      messageDirection:
-        event.type === "task-message:appended"
-          ? safeToken(event.data?.messageDirection)
-          : undefined,
-      senderType:
-        event.type === "task-message:appended"
-          ? safeToken(event.data?.senderType)
-          : undefined,
-      webhookSource:
-        event.type === "task-message:appended"
-          ? safeToken(webexWebhookSourceKind(event.source))
-          : undefined,
-      webhookVersion:
-        event.type === "task-message:appended" ? webhookVersion : undefined,
-      payloadShape: extractedMessage
-        ? safeToken(extractedMessage.shape)
-        : undefined,
-      payloadHints:
-        event.type === "task-message:appended"
-          ? safeToken(webexPayloadHints(event))
-          : undefined,
-      hasText: extractedMessage
-        ? Boolean(extractedMessage.message?.text?.trim())
-        : undefined,
-      attachmentCount: extractedMessage
-        ? (extractedMessage.message?.attachments?.length ?? 0)
-        : undefined,
-      status: status
-        ? safeToken(status)
-        : messageStatus
-          ? safeToken(messageStatus)
-          : undefined,
+      status: status ? safeToken(status) : undefined,
       code:
         event.type === "task:failed"
           ? safeReasonCode(event.data?.reason)

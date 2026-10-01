@@ -1,7 +1,6 @@
 export type WebexEvent = {
   id?: string;
   type?: string;
-  source?: string;
   comciscotimestamp?: number | string;
   data?: {
     taskId?: string;

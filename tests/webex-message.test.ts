@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractWebexMessage, webexPayloadHints } from "../lib/webex/message";
+import { extractWebexMessage } from "../lib/webex/message";
 import type { WebexEvent } from "../lib/webex/types";
 
 function event(data: WebexEvent["data"]): WebexEvent {
@@ -108,19 +108,6 @@ test("finds a bounded nested message record without accepting arbitrary text", (
   );
   assert.equal(nested.shape, "NESTED_MESSAGE_RECORD");
   assert.equal(nested.message?.text, "Nested reply");
-});
-
-test("payload hints reveal only fixed field names", () => {
-  assert.equal(
-    webexPayloadHints(
-      event({ payload: { privateField: "secret" }, messageData: {} }),
-    ),
-    "PAYLOAD+MESSAGE_DATA",
-  );
-  assert.equal(
-    webexPayloadHints(event({ senderType: "agent" })),
-    "NO_KNOWN_CONTENT_FIELDS",
-  );
 });
 
 test("does not search arbitrary nested fields for message content", () => {

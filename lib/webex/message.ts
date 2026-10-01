@@ -126,23 +126,6 @@ function nestedMessageRecord(
   }
 }
 
-export function webexPayloadHints(event: WebexEvent) {
-  const data = record(event.data);
-  if (!data) return "NO_DATA";
-  const hints = [
-    ["CHANNEL_PARAMS", data.channelParams],
-    ["MESSAGE", data.message],
-    ["PAYLOAD", data.payload],
-    ["CONTENT", data.content],
-    ["BODY", data.body],
-    ["EVENT_DATA", data.eventData],
-    ["MESSAGE_DATA", data.messageData],
-  ]
-    .filter(([, value]) => value !== undefined && value !== null)
-    .map(([name]) => name);
-  return hints.join("+") || "NO_KNOWN_CONTENT_FIELDS";
-}
-
 export function extractWebexMessage(event: WebexEvent): ExtractedWebexMessage {
   const data = record(event.data);
   if (!data) return { shape: "NONE" };
