@@ -114,6 +114,66 @@ export async function sendTelegramText(input: {
   return messageIds;
 }
 
+export async function downloadTelegramFile(
+  fileId: string,
+  maxBytes: number,
+) {
+  const file = await telegramRequest<{
+    file_path?: string;
+    file_size?: number;
+  }>("getFile", { file_id: fileId });
+  if (!file.file_path)
+    throw new BridgeError("TELEGRAM_FILE_PATH_MISSING", 502, true);
+  if (file.file_size && file.file_size > maxBytes)
+    throw new BridgeError("TELEGRAM_ATTACHMENT_TOO_LARGE", 422);
+
+  const config = telegramConfig();
+  const url = `${config.apiBaseUrl}/file/bot${config.botToken}/${file.file_path
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      signal: AbortSignal.timeout(config.attachmentDownloadTimeoutMs),
+    });
+  } catch {
+    throw new BridgeError("TELEGRAM_FILE_DOWNLOAD_FAILED", 502, true);
+  }
+  if (!response.ok || !response.body)
+    throw new BridgeError(`TELEGRAM_FILE_HTTP_${response.status}`, 502, true);
+
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes)
+    throw new BridgeError("TELEGRAM_ATTACHMENT_TOO_LARGE", 422);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        throw new BridgeError("TELEGRAM_ATTACHMENT_TOO_LARGE", 422);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof BridgeError) throw error;
+    throw new BridgeError("TELEGRAM_FILE_STREAM_FAILED", 502, true);
+  }
+  if (!size) throw new BridgeError("TELEGRAM_ATTACHMENT_EMPTY", 422);
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export async function sendTelegramAttachment(input: {
   chatId: string;
   attachment: DownloadedAttachment;

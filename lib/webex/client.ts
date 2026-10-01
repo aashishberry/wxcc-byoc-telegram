@@ -3,7 +3,7 @@ import { BridgeError } from "../errors";
 
 let tokenCache: { value: string; expiresAt: number } | null = null;
 
-async function webexAccessToken() {
+export async function webexAccessToken() {
   const env = runtimeEnv();
   if (env.WEBEX_ACCESS_TOKEN?.trim()) return env.WEBEX_ACCESS_TOKEN.trim();
   if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000)
@@ -77,6 +77,11 @@ export async function createWebexTask(input: {
   aliasId: string;
   text: string;
   timestamp: number;
+  attachments?: Array<{
+    fileName: string;
+    mimeType: string;
+    fileUrl: string;
+  }>;
 }) {
   const config = webexConfig();
   const body = await webexJsonRequest<{ data?: { id?: string } }>(
@@ -95,11 +100,14 @@ export async function createWebexTask(input: {
         channelType: "customMessaging",
         channel: config.channelName,
         channelParams: {
-          type: "text",
+          type: input.attachments?.length ? "text-with-attachments" : "text",
           message: {
             aliasId: input.aliasId,
             text: input.text,
             timestamp: input.timestamp,
+            ...(input.attachments?.length
+              ? { attachments: input.attachments }
+              : {}),
           },
         },
       }),
@@ -115,6 +123,11 @@ export async function appendWebexMessage(input: {
   aliasId: string;
   text: string;
   timestamp: number;
+  attachments?: Array<{
+    fileName: string;
+    mimeType: string;
+    fileUrl: string;
+  }>;
 }) {
   const config = webexConfig();
   await webexJsonRequest(
@@ -124,11 +137,14 @@ export async function appendWebexMessage(input: {
       body: JSON.stringify({
         mediaType: "customMessaging",
         channelParams: {
-          type: "text",
+          type: input.attachments?.length ? "text-with-attachments" : "text",
           message: {
             aliasId: input.aliasId,
             text: input.text,
             timestamp: input.timestamp,
+            ...(input.attachments?.length
+              ? { attachments: input.attachments }
+              : {}),
           },
         },
       }),

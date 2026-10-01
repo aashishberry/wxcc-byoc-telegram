@@ -8,6 +8,16 @@ export type TelegramChat = {
   type: "private" | "group" | "supergroup" | "channel";
 };
 
+export type TelegramFileReference = {
+  file_id: string;
+  file_unique_id?: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+  width?: number;
+  height?: number;
+};
+
 export type TelegramMessage = {
   message_id: number;
   message_thread_id?: number;
@@ -16,13 +26,13 @@ export type TelegramMessage = {
   chat: TelegramChat;
   text?: string;
   caption?: string;
-  photo?: unknown[];
-  document?: unknown;
-  audio?: unknown;
-  video?: unknown;
-  voice?: unknown;
-  video_note?: unknown;
-  animation?: unknown;
+  photo?: TelegramFileReference[];
+  document?: TelegramFileReference;
+  audio?: TelegramFileReference;
+  video?: TelegramFileReference;
+  voice?: TelegramFileReference;
+  video_note?: TelegramFileReference;
+  animation?: TelegramFileReference;
   sticker?: unknown;
   location?: unknown;
   contact?: unknown;

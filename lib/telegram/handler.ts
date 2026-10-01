@@ -20,26 +20,16 @@ import {
   touchConversation,
   updateConversationStatus,
 } from "../store";
+import { storeTemporaryAttachment } from "../temp-attachments";
 import { appendWebexMessage, createWebexTask } from "../webex/client";
-import { sendTelegramText } from "./client";
-import type { TelegramMessage, TelegramUpdate } from "./types";
+import {
+  hasUnsupportedTelegramContent,
+  telegramInboundAttachment,
+} from "./attachments";
+import { downloadTelegramFile, sendTelegramText } from "./client";
+import type { TelegramUpdate } from "./types";
 
 const provider = "telegram";
-
-function containsUnsupportedContent(message: TelegramMessage) {
-  return Boolean(
-    message.photo ||
-    message.document ||
-    message.audio ||
-    message.video ||
-    message.voice ||
-    message.video_note ||
-    message.animation ||
-    message.sticker ||
-    message.location ||
-    message.contact,
-  );
-}
 
 function command(text: string) {
   const match = text.match(/^\/(start|help)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i);
@@ -105,7 +95,11 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         });
         return { outcome: "ignored" as const };
       }
-      if (containsUnsupportedContent(message)) {
+      const media = telegramInboundAttachment(message);
+      if (
+        hasUnsupportedTelegramContent(message) ||
+        (media && !config.inboundAttachmentsEnabled)
+      ) {
         await sendTelegramText({
           chatId,
           text: config.unsupportedMessage,
@@ -121,8 +115,8 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         return { outcome: "ignored" as const };
       }
 
-      const text = message.text?.trim() ?? "";
-      if (!text) {
+      const text = (message.text ?? message.caption)?.trim() ?? "";
+      if (!text && !media) {
         await finishInboundUpdate(provider, updateId, "completed");
         logInfo("telegram.message_ignored", {
           provider,
@@ -132,7 +126,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
         });
         return { outcome: "ignored" as const };
       }
-      if (command(text)) {
+      if (!media && command(text)) {
         await sendTelegramText({
           chatId,
           text: config.welcomeMessage,
@@ -151,6 +145,45 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
       const timestamp = Number.isFinite(message.date)
         ? message.date * 1000
         : Date.now();
+      let attachments:
+        | Array<{ fileName: string; mimeType: string; fileUrl: string }>
+        | undefined;
+      if (media) {
+        try {
+          if (
+            media.fileSize &&
+            media.fileSize > config.inboundMaxAttachmentBytes
+          )
+            throw new BridgeError("TELEGRAM_ATTACHMENT_TOO_LARGE", 422);
+          const bytes = await downloadTelegramFile(
+            media.fileId,
+            config.inboundMaxAttachmentBytes,
+          );
+          attachments = [
+            await storeTemporaryAttachment({
+              bytes,
+              fileName: media.fileName,
+              mimeType: media.mimeType,
+            }),
+          ];
+        } catch (error) {
+          if (!(error instanceof BridgeError) || error.httpStatus !== 422)
+            throw error;
+          await sendTelegramText({
+            chatId,
+            text: config.unsupportedMessage,
+            messageThreadId: message.message_thread_id,
+          });
+          await finishInboundUpdate(provider, updateId, "completed");
+          logInfo("telegram.message_ignored", {
+            provider,
+            outcome: "ignored",
+            updateRef,
+            code: safeErrorCode(error),
+          });
+          return { outcome: "ignored" as const };
+        }
+      }
       const existing = await conversationByChat(provider, chatId);
       let taskId: string;
       let operation: "created" | "appended";
@@ -161,6 +194,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
           aliasId: claim.aliasId,
           text,
           timestamp,
+          attachments,
         });
         await touchConversation(taskId, timestamp);
         operation = "appended";
@@ -170,6 +204,7 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
           aliasId: claim.aliasId,
           text,
           timestamp,
+          attachments,
         });
         await saveConversation({
           provider,

@@ -1,8 +1,4 @@
-import {
-  runtimeEnv,
-  telegramConfig,
-  webexAttachmentsEncrypted,
-} from "../config";
+import { runtimeEnv, telegramConfig } from "../config";
 import { BridgeError } from "../errors";
 import {
   logError,
@@ -54,6 +50,28 @@ function eventBelongsToTelegramChannel(event: WebexEvent) {
   return (
     !event.data?.channel || !configured || event.data.channel === configured
   );
+}
+
+function normalizedEventValue(value: string | undefined) {
+  return value?.trim().toUpperCase();
+}
+
+function outboundMessage(event: WebexEvent) {
+  const direction = normalizedEventValue(event.data?.messageDirection);
+  const senderType = normalizedEventValue(event.data?.senderType);
+  return (
+    direction === "OUTBOUND" ||
+    senderType === "AGENT" ||
+    senderType === "SYSTEM"
+  );
+}
+
+function messageClassification(event: WebexEvent) {
+  if (event.type !== "task-message:appended") return;
+  if (outboundMessage(event)) return "OUTBOUND_ASSET";
+  if (normalizedEventValue(event.data?.messageDirection) === "INBOUND")
+    return "INBOUND_SUBSCRIPTION_ACK";
+  return "UNCLASSIFIED_MESSAGE";
 }
 
 export async function handleWebexWebhook(rawBody: string, request: Request) {
@@ -137,6 +155,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
 
   try {
     const status = taskStatuses[event.type];
+    let messageStatus = messageClassification(event);
     if (taskId && status) await updateConversationStatus(taskId, status, now);
 
     if (event.type === "task:connected" && taskId) {
@@ -153,27 +172,35 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       });
     } else if (
       event.type === "task-message:appended" &&
-      event.data?.messageDirection === "OUTBOUND" &&
+      outboundMessage(event) &&
       taskId
     ) {
       const conversation = await conversationByTask(taskId);
       if (!conversation)
         throw new BridgeError("WEBEX_CONVERSATION_NOT_READY", 503, true);
-      const message = event.data.channelParams?.message;
+      const message = event.data?.channelParams?.message;
       const attachments = message?.attachments ?? [];
       const text = message?.text?.trim() ?? "";
       const attachmentConfig = telegramConfig();
       if (
         attachments.length &&
-        attachmentConfig.outboundAttachmentsEnabled &&
-        !webexAttachmentsEncrypted()
+        attachmentConfig.outboundAttachmentsEnabled
       ) {
-        await deliverTelegramAttachments({
-          taskId,
-          deliveryKey: `webex:${message?.aliasId ?? event.id}`,
-          text,
-          attachments,
-        });
+        try {
+          await deliverTelegramAttachments({
+            taskId,
+            deliveryKey: `webex:${message?.aliasId ?? event.id}`,
+            text,
+            attachments,
+          });
+        } catch (error) {
+          await deliverTelegramText({
+            taskId,
+            deliveryKey: `webex:${message?.aliasId ?? event.id}:attachment-fallback`,
+            text: attachmentConfig.outboundAttachmentMessage,
+          });
+          throw error;
+        }
       } else if (attachments.length) {
         if (text) {
           await deliverTelegramText({
@@ -187,11 +214,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
           outcome: "ignored",
           taskRef: safeRef(taskId),
           updateRef: eventRef,
-          code: safeToken(
-            webexAttachmentsEncrypted()
-              ? "WEBEX_ATTACHMENT_ENCRYPTED"
-              : "ATTACHMENTS_DISABLED",
-          ),
+          code: safeToken("ATTACHMENTS_DISABLED"),
           count: attachments.length,
         });
         await deliverTelegramText({
@@ -205,7 +228,11 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
           deliveryKey: `webex:${message?.aliasId ?? event.id}:text`,
           text,
         });
+      } else {
+        messageStatus = "OUTBOUND_ASSET_EMPTY";
       }
+      if (messageStatus !== "OUTBOUND_ASSET_EMPTY")
+        messageStatus = "OUTBOUND_ASSET_DELIVERED";
     }
 
     await finishWebexEvent(eventKey, "completed");
@@ -215,7 +242,19 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       updateRef: eventRef,
       taskRef,
       eventType,
-      status: status ? safeToken(status) : undefined,
+      messageDirection:
+        event.type === "task-message:appended"
+          ? safeToken(event.data?.messageDirection)
+          : undefined,
+      senderType:
+        event.type === "task-message:appended"
+          ? safeToken(event.data?.senderType)
+          : undefined,
+      status: status
+        ? safeToken(status)
+        : messageStatus
+          ? safeToken(messageStatus)
+          : undefined,
       code:
         event.type === "task:failed"
           ? safeReasonCode(event.data?.reason)

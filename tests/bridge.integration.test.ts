@@ -145,7 +145,7 @@ test("messages bridge both directions and ended tasks start a new conversation",
         taskId: taskIds[0],
         channel: "telegram",
         channelType: "customMessaging",
-        messageDirection: "OUTBOUND",
+        messageDirection: "outbound",
         senderType: "agent",
         channelParams: {
           message: {
@@ -158,6 +158,56 @@ test("messages bridge both directions and ended tasks start a new conversation",
     const replyRequest = signedWebexRequest(reply);
     await handleWebexWebhook(replyRequest.rawBody, replyRequest.request);
     assert.equal(telegramRequests[1].text, "Agent reply");
+
+    const systemReplyWithoutDirection: WebexEvent = {
+      id: randomUUID(),
+      type: "task-message:appended",
+      comciscotimestamp: Date.now(),
+      data: {
+        taskId: taskIds[0],
+        channel: "telegram",
+        channelType: "customMessaging",
+        senderType: "system",
+        channelParams: {
+          message: {
+            aliasId: randomUUID(),
+            text: "Flow reply",
+          },
+        },
+      },
+    };
+    const systemReplyRequest = signedWebexRequest(systemReplyWithoutDirection);
+    await handleWebexWebhook(
+      systemReplyRequest.rawBody,
+      systemReplyRequest.request,
+    );
+    assert.equal(telegramRequests[2].text, "Flow reply");
+
+    const inboundAcknowledgement: WebexEvent = {
+      id: randomUUID(),
+      type: "task-message:appended",
+      comciscotimestamp: Date.now(),
+      data: {
+        taskId: taskIds[0],
+        channel: "telegram",
+        channelType: "customMessaging",
+        messageDirection: "INBOUND",
+        channelParams: {
+          message: {
+            aliasId: randomUUID(),
+            text: "Customer message acknowledgement",
+          },
+        },
+      },
+    };
+    const inboundAcknowledgementRequest = signedWebexRequest(
+      inboundAcknowledgement,
+    );
+    await handleWebexWebhook(
+      inboundAcknowledgementRequest.rawBody,
+      inboundAcknowledgementRequest.request,
+    );
+    assert.equal(telegramRequests.length, 3);
 
     const attachmentReply: WebexEvent = {
       id: randomUUID(),
@@ -189,7 +239,7 @@ test("messages bridge both directions and ended tasks start a new conversation",
       attachmentRequest.rawBody,
       attachmentRequest.request,
     );
-    const attachmentDelivery = telegramRequests[2];
+    const attachmentDelivery = telegramRequests[3];
     assert.equal(attachmentDelivery.method, "sendDocument");
     assert.equal(attachmentDelivery.caption, "Requested document");
     assert.equal((attachmentDelivery.file as File).name, "order-details.pdf");

@@ -18,6 +18,11 @@ export type RuntimeEnv = {
   TELEGRAM_OUTBOUND_ATTACHMENTS_ENABLED?: string;
   TELEGRAM_MAX_ATTACHMENT_BYTES?: string;
   TELEGRAM_ATTACHMENT_DOWNLOAD_TIMEOUT_MS?: string;
+  TELEGRAM_INBOUND_ATTACHMENTS_ENABLED?: string;
+  TELEGRAM_INBOUND_MAX_ATTACHMENT_BYTES?: string;
+  TEMP_ATTACHMENT_SIGNING_SECRET?: string;
+  TEMP_ATTACHMENT_TTL_SECONDS?: string;
+  TEMP_ATTACHMENT_DIRECTORY?: string;
   WEBEX_TASKS_URL?: string;
   WEBEX_SUBSCRIPTIONS_URL?: string;
   WEBEX_ORG_ID?: string;
@@ -26,6 +31,7 @@ export type RuntimeEnv = {
   WEBEX_DESTINATION_ID?: string;
   WEBEX_CHANNEL_NAME?: string;
   WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED?: string;
+  WEBEX_DECRYPTION_TIMEOUT_MS?: string;
   WEBEX_ACCESS_TOKEN?: string;
   WEBEX_CLIENT_ID?: string;
   WEBEX_CLIENT_SECRET?: string;
@@ -52,6 +58,9 @@ export function telegramConfig() {
   const requestedDownloadTimeout = Number(
     env.TELEGRAM_ATTACHMENT_DOWNLOAD_TIMEOUT_MS ?? 30_000,
   );
+  const requestedInboundMaxAttachmentBytes = Number(
+    env.TELEGRAM_INBOUND_MAX_ATTACHMENT_BYTES ?? 20 * 1024 * 1024,
+  );
   return {
     botToken: required(env.TELEGRAM_BOT_TOKEN, "TELEGRAM_TOKEN_MISSING"),
     webhookSecret: required(
@@ -71,7 +80,7 @@ export function telegramConfig() {
       "Hello! Send a message and we will connect you with support.",
     unsupportedMessage:
       env.TELEGRAM_UNSUPPORTED_MESSAGE?.trim() ||
-      "This integration currently supports text messages only.",
+      "This message type or attachment size is not supported.",
     outboundAttachmentMessage:
       env.TELEGRAM_OUTBOUND_ATTACHMENT_MESSAGE?.trim() ||
       "Support sent an attachment that could not be delivered through this channel.",
@@ -87,11 +96,57 @@ export function telegramConfig() {
       requestedDownloadTimeout >= 1_000
         ? Math.min(requestedDownloadTimeout, 120_000)
         : 30_000,
+    inboundAttachmentsEnabled:
+      env.TELEGRAM_INBOUND_ATTACHMENTS_ENABLED === "true",
+    inboundMaxAttachmentBytes:
+      Number.isSafeInteger(requestedInboundMaxAttachmentBytes) &&
+      requestedInboundMaxAttachmentBytes > 0
+        ? Math.min(requestedInboundMaxAttachmentBytes, 20 * 1024 * 1024)
+        : 20 * 1024 * 1024,
+  };
+}
+
+export function temporaryAttachmentConfig() {
+  const env = runtimeEnv();
+  const webhookUrl = required(
+    env.TELEGRAM_WEBHOOK_URL,
+    "TELEGRAM_WEBHOOK_URL_MISSING",
+  );
+  const signingSecret = required(
+    env.TEMP_ATTACHMENT_SIGNING_SECRET,
+    "TEMP_ATTACHMENT_SIGNING_SECRET_MISSING",
+  );
+  const ttl = Number(env.TEMP_ATTACHMENT_TTL_SECONDS ?? 900);
+  let publicOrigin: string;
+  try {
+    const url = new URL(webhookUrl);
+    if (url.protocol !== "https:")
+      throw new BridgeError("TEMP_ATTACHMENT_URL_NOT_HTTPS", 503);
+    publicOrigin = url.origin;
+  } catch (error) {
+    if (error instanceof BridgeError) throw error;
+    throw new BridgeError("TEMP_ATTACHMENT_URL_INVALID", 503);
+  }
+  return {
+    publicOrigin,
+    signingSecret,
+    ttlSeconds:
+      Number.isSafeInteger(ttl) && ttl >= 60 ? Math.min(ttl, 3600) : 900,
+    directory:
+      env.TEMP_ATTACHMENT_DIRECTORY?.trim() ||
+      "/tmp/relay-telegram-attachments",
   };
 }
 
 export function webexAttachmentsEncrypted() {
   return runtimeEnv().WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED === "true";
+}
+
+export function webexDecryptionTimeoutMs() {
+  const value = Number(runtimeEnv().WEBEX_DECRYPTION_TIMEOUT_MS ?? 60_000);
+  return Number.isSafeInteger(value) && value >= 5_000
+    ? Math.min(value, 120_000)
+    : 60_000;
 }
 
 export function webexConfig() {

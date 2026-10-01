@@ -1,5 +1,9 @@
-import { telegramConfig } from "./config";
+import {
+  telegramConfig,
+  webexAttachmentsEncrypted,
+} from "./config";
 import { BridgeError } from "./errors";
+import { decryptWebexAttachment } from "./webex/decryption";
 import type { WebexAttachment } from "./webex/types";
 
 const mimeExtensions: Record<string, string> = {
@@ -67,6 +71,21 @@ export async function downloadWebexAttachment(
 ): Promise<DownloadedAttachment> {
   const config = telegramConfig();
   const url = attachmentUrl(attachment);
+  if (webexAttachmentsEncrypted() || attachment.encrypted === true) {
+    const bytes = await decryptWebexAttachment(url.toString(), attachment);
+    if (!bytes.byteLength)
+      throw new BridgeError("ATTACHMENT_EMPTY", 422);
+    if (bytes.byteLength > config.maxAttachmentBytes)
+      throw new BridgeError("ATTACHMENT_TOO_LARGE", 422);
+    const mimeType = normalizedMimeType(attachment.mimeType);
+    return {
+      bytes,
+      size: bytes.byteLength,
+      mimeType,
+      fileName: safeFilename(attachment.fileName, mimeType),
+    };
+  }
+
   let response: Response;
   try {
     response = await fetch(url, {

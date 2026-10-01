@@ -27,4 +27,15 @@ export type WebexAttachment = {
   fileUrl?: string;
   mimeType?: string;
   fileName?: string;
+  encrypted?: boolean;
+  jwe?: string;
+  keyUri?: string;
+  encryptionDetails?: {
+    jwe?: string;
+    keyUri?: string;
+  };
+  encryption_details?: {
+    jwe?: string;
+    keyUri?: string;
+  };
 };

@@ -22,14 +22,15 @@ Channel icon assets are available in two transparent SVG variants:
 - [`assets/icons/telegram-channel-color.svg`](./assets/icons/telegram-channel-color.svg)
 - [`assets/icons/telegram-channel-outline.svg`](./assets/icons/telegram-channel-outline.svg)
 
-Inbound Telegram media is not yet forwarded to Webex. It receives a
-configurable text response because Webex requires a public HTTPS file URL for
-inbound Custom Messaging attachments.
+Inbound Telegram media can be forwarded to Webex through the optional
+single-instance temporary attachment relay. The bridge downloads the Telegram
+file, stores it under Render's ephemeral `/tmp` directory, and gives Webex an
+HMAC-signed, expiring HTTPS URL served by this application.
 
-Encrypted outbound Webex attachments are also not forwarded yet. Set
+Encrypted outbound Webex attachments are decrypted with the official Webex
+Encryption SDK before Telegram delivery. Set
 `WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED=true` for an organization using
-attachment encryption; the customer receives the configured fallback message
-until the Webex Decryption SDK is added.
+attachment encryption.
 
 ## Architecture
 
@@ -122,6 +123,10 @@ Copy [`.env.example`](./.env.example) and set these required values:
 | `TELEGRAM_OUTBOUND_ATTACHMENTS_ENABLED`   | Enables plain Webex-to-Telegram file delivery; defaults to `true`         |
 | `TELEGRAM_MAX_ATTACHMENT_BYTES`           | Download ceiling, capped at Telegram's 50 MB bot-upload limit             |
 | `TELEGRAM_ATTACHMENT_DOWNLOAD_TIMEOUT_MS` | Webex attachment download timeout; defaults to 30 seconds                 |
+| `TELEGRAM_INBOUND_ATTACHMENTS_ENABLED`    | Enables the test-mode Telegram-to-Webex attachment relay                 |
+| `TELEGRAM_INBOUND_MAX_ATTACHMENT_BYTES`   | Inbound ceiling, capped at Telegram Bot API's 20 MB download limit       |
+| `TEMP_ATTACHMENT_SIGNING_SECRET`          | HMAC secret for expiring temporary attachment URLs                       |
+| `TEMP_ATTACHMENT_TTL_SECONDS`             | Temporary URL/file lifetime; defaults to 15 minutes                      |
 | `WEBEX_TASKS_URL`                         | Region-specific WxCC `/v2/tasks` URL                                      |
 | `WEBEX_SUBSCRIPTIONS_URL`                 | Region-specific WxCC `/v2/subscriptions` URL                              |
 | `WEBEX_ORG_ID`                            | Authorized WxCC organization ID                                           |
@@ -130,6 +135,7 @@ Copy [`.env.example`](./.env.example) and set these required values:
 | `WEBEX_DESTINATION_ID`                    | Business address configured on the Custom Messaging asset                 |
 | `WEBEX_CHANNEL_NAME`                      | Exact configured Custom Messaging channel name                            |
 | `WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED`    | Set `true` when the organization uses encrypted outbound attachments      |
+| `WEBEX_DECRYPTION_TIMEOUT_MS`             | Webex SDK ready/decryption timeout; defaults to 60 seconds                |
 | `WEBEX_ACCESS_TOKEN`                      | Static token, or use the three refresh credential variables               |
 
 Use either `WEBEX_ACCESS_TOKEN` or all of:
@@ -160,6 +166,21 @@ Use different random values for `LOG_HASH_SECRET`,
    valid.
 7. Authorize the Service App and set its token or refresh credentials.
 8. Set the region-specific Tasks and Subscriptions base URLs.
+
+The task-message subscription and the asset webhook have different jobs even
+when they point to the same middleware route:
+
+- The `task-message:appended` subscription acknowledges inbound customer
+  messages sent by this middleware. These events normally have
+  `messageDirection: INBOUND` and must not be echoed back to Telegram.
+- Agent and flow replies are delivered by the Custom Messaging asset webhook
+  configured in Control Hub. These events have `messageDirection: OUTBOUND`
+  and `senderType: agent` or `system`.
+
+Receiving task lifecycle events proves the subscription URL works, but does not
+prove the asset webhook is configured. If logs classify every appended event as
+`INBOUND_SUBSCRIPTION_ACK` and never show `OUTBOUND_ASSET_DELIVERED`, verify the
+asset's webhook URL and secret in Control Hub.
 
 At startup the bridge reconciles two managed V2 subscriptions, matching the
 Relay middleware's subscription layout:
@@ -228,31 +249,52 @@ is not stored.
 
 ## Attachment behavior
 
-For a plain outbound Webex attachment, the bridge:
+For an outbound Webex attachment, the bridge:
 
 1. Verifies that the signed attachment URL is HTTPS and contains no embedded
    credentials.
-2. Downloads it with a timeout and enforces the configured byte limit while
-   streaming, even when `Content-Length` is absent.
-3. Preserves a sanitized Webex filename and MIME type.
-4. Uses Telegram `sendPhoto`, `sendVideo`, `sendAudio`, `sendAnimation`, or
+2. When `WEBEX_OUTBOUND_ATTACHMENTS_ENCRYPTED=true`, lazily loads the official
+   Webex Encryption SDK, registers an ephemeral SDK device with the Service App
+   token, and decrypts the attachment in memory.
+3. Otherwise, downloads the plain file with a timeout and enforces the
+   configured byte limit while streaming, even when `Content-Length` is absent.
+4. Preserves a sanitized Webex filename and MIME type.
+5. Uses Telegram `sendPhoto`, `sendVideo`, `sendAudio`, `sendAnimation`, or
    `sendDocument`, depending on the MIME type and size.
-5. Uses Webex message text as the first attachment caption when it fits
+6. Uses Webex message text as the first attachment caption when it fits
    Telegram's 1,024-character caption limit. Longer text is sent separately.
-6. Stores only idempotency metadata; file bytes are held in memory only for the
+7. Stores only idempotency metadata; file bytes are held in memory only for the
    Telegram upload and are not written to PostgreSQL or disk.
 
 Multiple attachments are delivered separately and retry independently. File
 URLs, filenames, MIME types, captions, and bytes are never logged.
 
-The middleware caps uploads at 50 MB because that is the current Telegram Bot
-API limit for general bot file uploads. Photos over 10 MB are sent as documents.
-Lower `TELEGRAM_MAX_ATTACHMENT_BYTES` to match your service memory budget.
+The middleware hard-caps uploads at 50 MB because that is Telegram's general
+bot-upload limit. The example configuration uses a safer 10 MB ceiling for a
+512 MB Render Free instance. Photos over 10 MB are sent as documents. Tune
+`TELEGRAM_MAX_ATTACHMENT_BYTES` to the service memory budget.
 
 Because attachment delivery performs a download and Telegram upload during the
 webhook request, sustained volume should use a durable background job queue.
 That avoids exceeding Webex's webhook response-time target and is the next
 production-scale reliability enhancement.
+
+### Test-mode Telegram-to-Webex attachments
+
+Set `TELEGRAM_INBOUND_ATTACHMENTS_ENABLED=true` and generate a separate
+`TEMP_ATTACHMENT_SIGNING_SECRET`. Telegram media is downloaded in memory,
+written with owner-only permissions under `/tmp`, and exposed through an
+unlisted HMAC-signed URL for 15 minutes. The endpoint supports both `HEAD` and
+`GET`, includes an exact `Content-Length`, and uses a generic public filename so
+Render access logs do not receive the customer's original filename.
+
+This mode is suitable for a free-tier, single-instance test. Render's local
+filesystem is ephemeral: a restart, redeploy, or a request routed to another
+instance can make the file unavailable before Webex retrieves it. Production
+deployment should replace this implementation with private object storage and
+short-lived signed URLs. Telegram's hosted Bot API also limits bot downloads to
+20 MB, regardless of the Webex channel's larger attachment policy. The example
+configuration uses 10 MB to leave memory headroom on Render Free.
 
 ## Commands
 

@@ -42,6 +42,8 @@ export type SafeLogFields = {
   taskRef?: SafeRef;
   deliveryRef?: SafeRef;
   eventType?: SafeToken;
+  messageDirection?: SafeToken;
+  senderType?: SafeToken;
   code?: SafeToken;
   status?: SafeToken;
   httpStatus?: number;

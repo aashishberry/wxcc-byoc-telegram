@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -6,6 +7,12 @@ import {
   downloadWebexAttachment,
   telegramAttachmentMethod,
 } from "../lib/attachments";
+import {
+  decodeTemporaryAttachmentToken,
+  storeTemporaryAttachment,
+} from "../lib/temp-attachments";
+import { telegramInboundAttachment } from "../lib/telegram/attachments";
+import { createWebexTask } from "../lib/webex/client";
 import { BridgeError } from "../lib/errors";
 
 process.env.TELEGRAM_BOT_TOKEN = "attachment-test-token";
@@ -83,6 +90,89 @@ test("attachment stream is stopped at the configured limit", async () => {
       (error: unknown) =>
         error instanceof BridgeError && error.code === "ATTACHMENT_TOO_LARGE",
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Telegram inbound media keeps safe file metadata", () => {
+  const attachment = telegramInboundAttachment({
+    message_id: 1,
+    date: 1,
+    chat: { id: 1, type: "private" },
+    document: {
+      file_id: "telegram-file",
+      file_name: "../../invoice?.pdf",
+      mime_type: "application/pdf",
+      file_size: 1024,
+    },
+  });
+  assert.deepEqual(attachment, {
+    fileId: "telegram-file",
+    fileName: "invoice_.pdf",
+    mimeType: "application/pdf",
+    fileSize: 1024,
+  });
+});
+
+test("temporary attachment URLs are signed and preserve exact size", async () => {
+  process.env.TELEGRAM_WEBHOOK_URL =
+    "https://bridge.example/api/webhooks/telegram";
+  process.env.TEMP_ATTACHMENT_SIGNING_SECRET = "test-signing-secret";
+  process.env.TEMP_ATTACHMENT_DIRECTORY = `/tmp/relay-attachment-test-${process.pid}`;
+  const stored = await storeTemporaryAttachment({
+    bytes: new TextEncoder().encode("file-content"),
+    fileName: "invoice.pdf",
+    mimeType: "application/pdf",
+  });
+  const url = new URL(stored.fileUrl);
+  const token = url.pathname.split("/")[3];
+  const decoded = decodeTemporaryAttachmentToken(token);
+  try {
+    assert.equal(decoded.size, 12);
+    assert.equal(decoded.mimeType, "application/pdf");
+    assert.match(decoded.name, /^attachment-[a-f0-9-]{36}\.pdf$/);
+    assert.throws(
+      () => decodeTemporaryAttachmentToken(`${token}x`),
+      /TEMP_ATTACHMENT_TOKEN_INVALID/,
+    );
+  } finally {
+    await unlink(decoded.path);
+  }
+});
+
+test("Webex create task uses text-with-attachments payload", async () => {
+  process.env.WEBEX_ACCESS_TOKEN = "test-token";
+  process.env.WEBEX_TASKS_URL = "https://webex.example/v2/tasks";
+  process.env.WEBEX_DESTINATION_ID = "support@example.com";
+  process.env.WEBEX_CHANNEL_NAME = "telegram";
+  process.env.WEBEX_WEBHOOK_SECRET = "test-webhook-secret";
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ data: { id: "task-1" } }, { status: 201 });
+  };
+  try {
+    await createWebexTask({
+      originId: "opaque-origin",
+      aliasId: crypto.randomUUID(),
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          fileName: "invoice.pdf",
+          mimeType: "application/pdf",
+          fileUrl: "https://bridge.example/api/attachments/signed/file.pdf",
+        },
+      ],
+    });
+    const channelParams = requestBody?.channelParams as {
+      type?: string;
+      message?: { attachments?: unknown[] };
+    };
+    assert.equal(channelParams.type, "text-with-attachments");
+    assert.equal(channelParams.message?.attachments?.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
