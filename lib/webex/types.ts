@@ -11,15 +11,29 @@ export type WebexEvent = {
     createdTime?: number | string;
     channelType?: string;
     channel?: string;
-    channelParams?: {
-      message?: {
-        aliasId?: string;
-        text?: string;
-        attachments?: WebexAttachment[];
-        timestamp?: number | string;
-      };
-    };
+    channelParams?: WebexChannelParams | string;
+    message?: WebexMessage | string;
+    aliasId?: string;
+    text?: string;
+    attachments?: WebexAttachment[];
+    timestamp?: number | string;
   };
+};
+
+export type WebexChannelParams = {
+  type?: string;
+  message?: WebexMessage | string;
+  aliasId?: string;
+  text?: string;
+  attachments?: WebexAttachment[];
+  timestamp?: number | string;
+};
+
+export type WebexMessage = {
+  aliasId?: string;
+  text?: string;
+  attachments?: WebexAttachment[];
+  timestamp?: number | string;
 };
 
 export type WebexAttachment = {

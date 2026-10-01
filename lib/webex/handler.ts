@@ -19,6 +19,7 @@ import {
   deliverTelegramAttachments,
   deliverTelegramText,
 } from "../telegram/delivery";
+import { extractWebexMessage } from "./message";
 import { verifyWebexWebhook } from "./signature";
 import type { WebexEvent } from "./types";
 
@@ -156,6 +157,10 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
   try {
     const status = taskStatuses[event.type];
     let messageStatus = messageClassification(event);
+    const extractedMessage =
+      event.type === "task-message:appended"
+        ? extractWebexMessage(event)
+        : undefined;
     if (taskId && status) await updateConversationStatus(taskId, status, now);
 
     if (event.type === "task:connected" && taskId) {
@@ -178,7 +183,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       const conversation = await conversationByTask(taskId);
       if (!conversation)
         throw new BridgeError("WEBEX_CONVERSATION_NOT_READY", 503, true);
-      const message = event.data?.channelParams?.message;
+      const message = extractedMessage?.message;
       const attachments = message?.attachments ?? [];
       const text = message?.text?.trim() ?? "";
       const attachmentConfig = telegramConfig();
@@ -250,6 +255,15 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
         event.type === "task-message:appended"
           ? safeToken(event.data?.senderType)
           : undefined,
+      payloadShape: extractedMessage
+        ? safeToken(extractedMessage.shape)
+        : undefined,
+      hasText: extractedMessage
+        ? Boolean(extractedMessage.message?.text?.trim())
+        : undefined,
+      attachmentCount: extractedMessage
+        ? (extractedMessage.message?.attachments?.length ?? 0)
+        : undefined,
       status: status
         ? safeToken(status)
         : messageStatus

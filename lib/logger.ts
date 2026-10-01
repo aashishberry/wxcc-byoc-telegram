@@ -44,6 +44,9 @@ export type SafeLogFields = {
   eventType?: SafeToken;
   messageDirection?: SafeToken;
   senderType?: SafeToken;
+  payloadShape?: SafeToken;
+  hasText?: boolean;
+  attachmentCount?: number;
   code?: SafeToken;
   status?: SafeToken;
   httpStatus?: number;
