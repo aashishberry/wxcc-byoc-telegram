@@ -1,8 +1,4 @@
-import type {
-  WebexAttachment,
-  WebexEvent,
-  WebexMessage,
-} from "./types";
+import type { WebexAttachment, WebexEvent, WebexMessage } from "./types";
 
 export type WebexMessageShape =
   | "CHANNEL_PARAMS_MESSAGE"
@@ -13,6 +9,12 @@ export type WebexMessageShape =
   | "DATA_MESSAGE"
   | "DATA_MESSAGE_JSON"
   | "DATA_DIRECT"
+  | "DATA_PAYLOAD_WRAPPER"
+  | "DATA_CONTENT_WRAPPER"
+  | "DATA_BODY_WRAPPER"
+  | "DATA_EVENT_DATA_WRAPPER"
+  | "DATA_MESSAGE_DATA_WRAPPER"
+  | "NESTED_MESSAGE_RECORD"
   | "NONE";
 
 export type ExtractedWebexMessage = {
@@ -54,8 +56,7 @@ function messageFromRecord(value: Record<string, unknown>): WebexMessage {
     text: typeof value.text === "string" ? value.text : undefined,
     attachments: attachments(value.attachments),
     timestamp:
-      typeof value.timestamp === "string" ||
-      typeof value.timestamp === "number"
+      typeof value.timestamp === "string" || typeof value.timestamp === "number"
         ? value.timestamp
         : undefined,
   };
@@ -73,15 +74,76 @@ function messageFromValue(value: unknown): WebexMessage | undefined {
 function hasMessageContent(message: WebexMessage | undefined) {
   return Boolean(
     message?.text?.trim() ||
-      message?.attachments?.length ||
-      message?.aliasId ||
-      message?.timestamp,
+    message?.attachments?.length ||
+    message?.aliasId ||
+    message?.timestamp,
   );
 }
 
-export function extractWebexMessage(
-  event: WebexEvent,
-): ExtractedWebexMessage {
+function messageFromContainer(value: unknown): WebexMessage | undefined {
+  const container = parsedRecord(value);
+  if (!container) return messageFromValue(value);
+
+  const channelParams = parsedRecord(container.channelParams);
+  if (channelParams) {
+    const nested = messageFromValue(channelParams.message);
+    if (hasMessageContent(nested)) return nested;
+    const direct = messageFromRecord(channelParams);
+    if (hasMessageContent(direct)) return direct;
+  }
+
+  const nested = messageFromValue(container.message);
+  if (hasMessageContent(nested)) return nested;
+
+  const direct = messageFromRecord(container);
+  if (hasMessageContent(direct)) return direct;
+}
+
+function nestedMessageRecord(
+  value: unknown,
+  depth = 0,
+  state: { visited: number } = { visited: 0 },
+): WebexMessage | undefined {
+  if (depth > 5 || state.visited >= 64) return;
+  const container = parsedRecord(value);
+  if (!container) return;
+  state.visited += 1;
+
+  const self = messageFromRecord(container);
+  if (
+    (self.aliasId || self.timestamp) &&
+    (self.text?.trim() || self.attachments?.length)
+  )
+    return self;
+
+  for (const [key, child] of Object.entries(container)) {
+    if (key === "message") {
+      const message = messageFromContainer(child);
+      if (hasMessageContent(message)) return message;
+    }
+    const nested = nestedMessageRecord(child, depth + 1, state);
+    if (nested) return nested;
+  }
+}
+
+export function webexPayloadHints(event: WebexEvent) {
+  const data = record(event.data);
+  if (!data) return "NO_DATA";
+  const hints = [
+    ["CHANNEL_PARAMS", data.channelParams],
+    ["MESSAGE", data.message],
+    ["PAYLOAD", data.payload],
+    ["CONTENT", data.content],
+    ["BODY", data.body],
+    ["EVENT_DATA", data.eventData],
+    ["MESSAGE_DATA", data.messageData],
+  ]
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([name]) => name);
+  return hints.join("+") || "NO_KNOWN_CONTENT_FIELDS";
+}
+
+export function extractWebexMessage(event: WebexEvent): ExtractedWebexMessage {
   const data = record(event.data);
   if (!data) return { shape: "NONE" };
 
@@ -126,6 +188,23 @@ export function extractWebexMessage(
   const directMessage = messageFromRecord(data);
   if (hasMessageContent(directMessage))
     return { shape: "DATA_DIRECT", message: directMessage };
+
+  const wrappers = [
+    ["DATA_PAYLOAD_WRAPPER", data.payload],
+    ["DATA_CONTENT_WRAPPER", data.content],
+    ["DATA_BODY_WRAPPER", data.body],
+    ["DATA_EVENT_DATA_WRAPPER", data.eventData],
+    ["DATA_MESSAGE_DATA_WRAPPER", data.messageData],
+  ] as const;
+  for (const [shape, value] of wrappers) {
+    const wrappedMessage = messageFromContainer(value);
+    if (hasMessageContent(wrappedMessage))
+      return { shape, message: wrappedMessage };
+  }
+
+  const nestedMessage = nestedMessageRecord(data);
+  if (hasMessageContent(nestedMessage))
+    return { shape: "NESTED_MESSAGE_RECORD", message: nestedMessage };
 
   return { shape: "NONE" };
 }

@@ -21,6 +21,35 @@ type DesiredSubscription = {
   resourceVersion: string;
 };
 
+const managedSubscriptionIds = new Set<string>();
+
+function subscriptionId(subscription: WebexSubscription | undefined) {
+  return subscription?.id ?? subscription?.subscriptionId;
+}
+
+function rememberManagedSubscription(
+  subscription: WebexSubscription | undefined,
+) {
+  const id = subscriptionId(subscription);
+  if (id) managedSubscriptionIds.add(id);
+}
+
+function subscriptionFromResponse(body: unknown) {
+  if (!body || typeof body !== "object") return;
+  const record = body as Record<string, unknown>;
+  if (record.data && typeof record.data === "object")
+    return record.data as WebexSubscription;
+  return record as WebexSubscription;
+}
+
+export function webexWebhookSourceKind(source: string | undefined) {
+  const id = source?.split("/").filter(Boolean).at(-1);
+  if (!id) return "UNKNOWN";
+  return managedSubscriptionIds.has(id)
+    ? "MANAGED_SUBSCRIPTION"
+    : "ASSET_OR_UNMANAGED";
+}
+
 const desiredSubscriptions: DesiredSubscription[] = [
   {
     name: "telegram-bridge-task-lifecycle",
@@ -110,6 +139,7 @@ export async function reconcileWebexSubscriptions() {
     let drifted = 0;
     for (const desired of desiredSubscriptions) {
       const matches = existing.filter((item) => item.name === desired.name);
+      matches.forEach(rememberManagedSubscription);
       if (
         matches.some((item) => isActive(item, desired, settings.destinationUrl))
       )
@@ -118,15 +148,18 @@ export async function reconcileWebexSubscriptions() {
         drifted += 1;
         continue;
       }
-      await webexJsonRequest(settings.subscriptionsUrl, {
-        method: "POST",
-        body: JSON.stringify({
-          ...desired,
-          destinationUrl: settings.destinationUrl,
-          secret: settings.secret,
-          orgId: settings.orgId,
+      const createdSubscription = subscriptionFromResponse(
+        await webexJsonRequest(settings.subscriptionsUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            ...desired,
+            destinationUrl: settings.destinationUrl,
+            secret: settings.secret,
+            orgId: settings.orgId,
+          }),
         }),
-      });
+      );
+      rememberManagedSubscription(createdSubscription);
       created += 1;
     }
     logInfo("webex.subscription_sync", {

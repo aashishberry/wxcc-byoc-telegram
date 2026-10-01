@@ -19,8 +19,9 @@ import {
   deliverTelegramAttachments,
   deliverTelegramText,
 } from "../telegram/delivery";
-import { extractWebexMessage } from "./message";
+import { extractWebexMessage, webexPayloadHints } from "./message";
 import { verifyWebexWebhook } from "./signature";
+import { webexWebhookSourceKind } from "./subscriptions";
 import type { WebexEvent } from "./types";
 
 const taskStatuses: Record<string, string> = {
@@ -92,6 +93,9 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
   const eventRef = safeRef(event.id);
   const taskRef = safeRef(taskId);
   const eventType = safeToken(event.type);
+  const webhookVersion = safeToken(
+    request.headers.get("x-webexcc-webhook-version"),
+  );
   logInfo("webex.webhook_received", {
     provider: "webex",
     outcome: "accepted",
@@ -187,10 +191,7 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
       const attachments = message?.attachments ?? [];
       const text = message?.text?.trim() ?? "";
       const attachmentConfig = telegramConfig();
-      if (
-        attachments.length &&
-        attachmentConfig.outboundAttachmentsEnabled
-      ) {
+      if (attachments.length && attachmentConfig.outboundAttachmentsEnabled) {
         try {
           await deliverTelegramAttachments({
             taskId,
@@ -255,9 +256,19 @@ export async function handleWebexWebhook(rawBody: string, request: Request) {
         event.type === "task-message:appended"
           ? safeToken(event.data?.senderType)
           : undefined,
+      webhookSource:
+        event.type === "task-message:appended"
+          ? safeToken(webexWebhookSourceKind(event.source))
+          : undefined,
+      webhookVersion:
+        event.type === "task-message:appended" ? webhookVersion : undefined,
       payloadShape: extractedMessage
         ? safeToken(extractedMessage.shape)
         : undefined,
+      payloadHints:
+        event.type === "task-message:appended"
+          ? safeToken(webexPayloadHints(event))
+          : undefined,
       hasText: extractedMessage
         ? Boolean(extractedMessage.message?.text?.trim())
         : undefined,

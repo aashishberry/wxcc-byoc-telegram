@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractWebexMessage } from "../lib/webex/message";
+import { extractWebexMessage, webexPayloadHints } from "../lib/webex/message";
 import type { WebexEvent } from "../lib/webex/types";
 
 function event(data: WebexEvent["data"]): WebexEvent {
@@ -73,9 +73,61 @@ test("extracts flattened compatibility payloads", () => {
   assert.equal(dataDirect.message?.text, "Direct data");
 });
 
+test("extracts only explicitly allowlisted wrapper payloads", () => {
+  const payload = extractWebexMessage(
+    event({
+      payload: {
+        channelParams: {
+          message: { aliasId: "message-7", text: "Wrapped reply" },
+        },
+      },
+    }),
+  );
+  assert.equal(payload.shape, "DATA_PAYLOAD_WRAPPER");
+  assert.equal(payload.message?.text, "Wrapped reply");
+
+  const content = extractWebexMessage(event({ content: "Content reply" }));
+  assert.equal(content.shape, "DATA_CONTENT_WRAPPER");
+  assert.equal(content.message?.text, "Content reply");
+});
+
+test("finds a bounded nested message record without accepting arbitrary text", () => {
+  const nested = extractWebexMessage(
+    event({
+      payload: undefined,
+      content: undefined,
+      body: undefined,
+      eventData: undefined,
+      messageData: undefined,
+      unknownEnvelope: {
+        notification: {
+          message: { aliasId: "message-8", text: "Nested reply" },
+        },
+      },
+    } as WebexEvent["data"] & Record<string, unknown>),
+  );
+  assert.equal(nested.shape, "NESTED_MESSAGE_RECORD");
+  assert.equal(nested.message?.text, "Nested reply");
+});
+
+test("payload hints reveal only fixed field names", () => {
+  assert.equal(
+    webexPayloadHints(
+      event({ payload: { privateField: "secret" }, messageData: {} }),
+    ),
+    "PAYLOAD+MESSAGE_DATA",
+  );
+  assert.equal(
+    webexPayloadHints(event({ senderType: "agent" })),
+    "NO_KNOWN_CONTENT_FIELDS",
+  );
+});
+
 test("does not search arbitrary nested fields for message content", () => {
   const extracted = extractWebexMessage(
-    event({ channelParams: JSON.stringify({ unrelated: { text: "private" } }) }),
+    event({
+      channelParams: JSON.stringify({ unrelated: { text: "private" } }),
+    }),
   );
 
   assert.equal(extracted.shape, "NONE");

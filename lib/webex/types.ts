@@ -1,6 +1,7 @@
 export type WebexEvent = {
   id?: string;
   type?: string;
+  source?: string;
   comciscotimestamp?: number | string;
   data?: {
     taskId?: string;
@@ -13,6 +14,11 @@ export type WebexEvent = {
     channel?: string;
     channelParams?: WebexChannelParams | string;
     message?: WebexMessage | string;
+    payload?: unknown;
+    content?: unknown;
+    body?: unknown;
+    eventData?: unknown;
+    messageData?: unknown;
     aliasId?: string;
     text?: string;
     attachments?: WebexAttachment[];
